@@ -1,45 +1,10 @@
-terraform {
-  required_providers {
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "= 2.91.0"
-    }
-    http = {
-      version = ">= 2.1.0"
-    }
-    null = {
-      version = ">= 3.1.0"
-    }
-    local = {
-      version = ">= 2.1.0"
-    }
-    template = {
-      version = ">= 2.2.0"
-    }
-  }
-
-  required_version = "~> 1.1.4"
-}
-
-provider "azurerm" {
-  features {}
-
-  # uncomment the lines below and
-  # following this link https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/guides/service_principal_client_secret
-  # for Service Principal authentication
-  #subscription_id = var.azure_subscription_id
-  #client_id       = var.azure_client_id
-  #client_secret   = var.azure_client_secret
-  #tenant_id       = var.azure_tenant_id
-}
-
 data "http" "local_ip" {
   url = "https://ipv4.icanhazip.com"
 }
 
 resource "azurerm_resource_group" "honeypot" {
   name     = "honeypot-resource-group"
-  location =  var.azure_region
+  location = var.azure_region
 }
 
 resource "azurerm_network_security_group" "honeypot" {
@@ -96,16 +61,16 @@ resource "azurerm_network_interface" "honeypot" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.honeypot.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = element(azurerm_public_ip.honeypot.*.id, count.index)
+    public_ip_address_id          = azurerm_public_ip.honeypot[count.index].id
   }
-  
+
   tags = {
     environment = var.azure_tag
   }
 }
 
 resource "azurerm_network_interface_security_group_association" "honeypot" {
-  network_interface_id      = element(azurerm_network_interface.honeypot.*.id, count.index)
+  network_interface_id      = azurerm_network_interface.honeypot[count.index].id
   network_security_group_id = azurerm_network_security_group.honeypot.id
   count                     = var.honeypot_nodes
 }
@@ -114,7 +79,7 @@ resource "azurerm_linux_virtual_machine" "honeypot" {
   name                  = "ubuntu-linux-vm-${count.index}"
   location              = azurerm_resource_group.honeypot.location
   resource_group_name   = azurerm_resource_group.honeypot.name
-  network_interface_ids = [element(azurerm_network_interface.honeypot.*.id, count.index)]
+  network_interface_ids = [azurerm_network_interface.honeypot[count.index].id]
   size                  = var.azure_image_size
   count                 = var.honeypot_nodes
   source_image_reference {
@@ -123,11 +88,11 @@ resource "azurerm_linux_virtual_machine" "honeypot" {
     sku       = var.azure_image_sku
     version   = "latest"
   }
-  admin_username        = var.azure_image_user
+  admin_username = var.azure_image_user
   admin_ssh_key {
     username   = var.azure_image_user
     public_key = file("${var.azure_ssh_key_pub}")
-  }  
+  }
   os_disk {
     name                 = "ubuntu-linux-vm-osdisk-${count.index}"
     caching              = "ReadWrite"
@@ -138,40 +103,47 @@ resource "azurerm_linux_virtual_machine" "honeypot" {
   }
 }
 
+data "azurerm_public_ip" "honeypot" {
+  count               = var.honeypot_nodes
+  name                = azurerm_public_ip.honeypot[count.index].name
+  resource_group_name = azurerm_linux_virtual_machine.honeypot[count.index].resource_group_name
+}
+
 resource "null_resource" "upload" {
-  count    = var.honeypot_nodes
+  count = var.honeypot_nodes
+
   triggers = {
-    azure_public_ip = element(azurerm_public_ip.honeypot.*.ip_address, count.index) 
+    azure_public_ip = data.azurerm_public_ip.honeypot[count.index].ip_address
   }
 
   connection {
     type        = "ssh"
     user        = var.azure_image_user
-    host        = element(azurerm_public_ip.honeypot.*.ip_address, count.index)
+    host        = data.azurerm_public_ip.honeypot[count.index].ip_address
     private_key = file(var.azure_ssh_key_priv)
   }
 
   provisioner "file" {
     destination = "/tmp/dshield.ini"
-    content     = templatefile("${path.module}/../templates/dshield_ini.tpl", {
-     dshield_email  = var.dshield_email
-     dshield_userid = var.dshield_userid
-     dshield_apikey = var.dshield_apikey
-     public_ip      = element(azurerm_public_ip.honeypot.*.ip_address, count.index)
-     public_ssh     = var.honeypot_ssh_port
-     private_ip     = join("/", [var.honeypot_network, "24"])
-     deploy_ip      = chomp(data.http.local_ip.body)
+    content = templatefile("${path.module}/../templates/dshield_ini.tpl", {
+      dshield_email  = var.dshield_email
+      dshield_userid = var.dshield_userid
+      dshield_apikey = var.dshield_apikey
+      public_ip      = data.azurerm_public_ip.honeypot[count.index].ip_address
+      public_ssh     = var.honeypot_ssh_port
+      private_ip     = join("/", [var.honeypot_network, "24"])
+      deploy_ip      = chomp(data.http.local_ip.response_body)
     })
   }
-  
+
   provisioner "file" {
     destination = "/tmp/dshield.sslca"
-    content     = templatefile("${path.module}/../templates/dshield_sslca.tpl", {
-     dshield_ca_country  = var.dshield_ca_country
-     dshield_ca_state    = var.dshield_ca_state
-     dshield_ca_city     = var.dshield_ca_city
-     dshield_ca_company  = var.dshield_ca_company
-     dshield_ca_depart   = var.dshield_ca_depart
+    content = templatefile("${path.module}/../templates/dshield_sslca.tpl", {
+      dshield_ca_country = var.dshield_ca_country
+      dshield_ca_state   = var.dshield_ca_state
+      dshield_ca_city    = var.dshield_ca_city
+      dshield_ca_company = var.dshield_ca_company
+      dshield_ca_depart  = var.dshield_ca_depart
     })
   }
 
@@ -194,20 +166,20 @@ resource "null_resource" "upload" {
     script = "${path.module}/../scripts/install_reqs.sh"
   }
 
-  # depends on at least one honeypot 
-  depends_on = [ azurerm_public_ip.honeypot[0] ]
+  # depends on 1 honeypot
+  depends_on = [azurerm_linux_virtual_machine.honeypot[0]]
 }
 
 resource "null_resource" "install" {
-  count    = var.honeypot_nodes
+  count = var.honeypot_nodes
   triggers = {
-    azure_public_ip = element(azurerm_public_ip.honeypot.*.ip_address, count.index) 
+    azure_public_ip = data.azurerm_public_ip.honeypot[count.index].ip_address
   }
 
   connection {
     type        = "ssh"
     user        = var.azure_image_user
-    host        = element(azurerm_public_ip.honeypot.*.ip_address, count.index)
+    host        = data.azurerm_public_ip.honeypot[count.index].ip_address
     port        = var.honeypot_ssh_port
     private_key = file(var.azure_ssh_key_priv)
   }

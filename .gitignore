@@ -1,0 +1,6 @@
+dshield.tfvars
+*.tfvars
+terraform.tfstate
+terraform.tfstate.backup
+tfplan
+*.plan
