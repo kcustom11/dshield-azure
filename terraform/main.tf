@@ -14,12 +14,36 @@ resource "azurerm_network_security_group" "honeypot" {
 
   security_rule {
     name                       = "allow_all"
-    priority                   = 100
+    priority                   = 200
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "*"
     source_port_range          = "*"
     destination_port_range     = "*"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "allow_honeypot_ssh"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = var.honeypot_ssh_port
+    source_address_prefix      = chomp(data.http.local_ip.response_body)
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "deny_honeypot_ssh"
+    priority                   = 101
+    direction                  = "Inbound"
+    access                     = "Deny"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = var.honeypot_ssh_port
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
