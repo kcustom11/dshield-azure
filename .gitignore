@@ -1,8 +1,7 @@
-dshield.tfvars
+.terraform*
 *.tfvars
 terraform.tfstate
 terraform.tfstate.backup
 tfplan
 *.plan
-.terraform*
-terraform/.terraform*
+*.destroy
